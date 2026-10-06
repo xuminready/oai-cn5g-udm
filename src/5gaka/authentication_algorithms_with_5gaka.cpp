@@ -551,8 +551,8 @@ uint8_t* Authentication_5gaka::sqn_ms_derive(
 
 // ck, ik, vector.xres, vector.rand, serving_network, vector.xresStar
 void Authentication_5gaka::annex_a_4_33501(
-    uint8_t ck[16], uint8_t ik[16], uint8_t* input, uint8_t rand[16],
-    std::string serving_network, uint8_t* output) {
+    uint8_t ck[16], uint8_t ik[16], uint8_t* input, uint8_t input_len,
+    uint8_t rand[16], std::string serving_network, uint8_t* output) {
   OCTET_STRING_t netName;
   OCTET_STRING_fromBuf(
       &netName, serving_network.c_str(), serving_network.length());
@@ -564,33 +564,15 @@ void Authentication_5gaka::annex_a_4_33501(
   for (int i = 0; i < 16; i++) S[3 + netName.size + i] = rand[i];
   S[19 + netName.size] = 0x00;
   S[20 + netName.size] = 0x10;
-  for (int i = 0; i < 8; i++) S[21 + netName.size + i] = input[i];
-  S[29 + netName.size] = 0x00;
-  S[30 + netName.size] = 0x08;
-  /*
-    uint8_t plmn[3] = {0x46, 0x0f, 0x11};
-    uint8_t oldS[100];
-    oldS[0] = 0x6B;
-    memcpy(&oldS[1], plmn, 3);
-    oldS[4] = 0x00;
-    oldS[5] = 0x03;
-    for (int i = 0; i < 16; i++)
-      oldS[6 + i] = rand[i];
-    oldS[22] = 0x00;
-    oldS[23] = 0x10;
-    for (int i = 0; i < 8; i++)
-      oldS[24 + i] = input[i];
-    oldS[32] = 0x00;
-    oldS[33] = 0x08;
-  */
-  // oai::utils::output_wrapper::print_buffer("udm_ueau", "Input string: ", S,
-  // 31 + netName.size);
+  for (int i = 0; i < input_len; i++) S[21 + netName.size + i] = input[i];
+  S[21 + netName.size + input_len] = (input_len & 0xff00) >> 8;
+  S[22 + netName.size + input_len] = (input_len & 0x00ff);
+
   uint8_t key[32];
   memcpy(&key[0], ck, 16);
   memcpy(&key[16], ik, 16);  // KEY
-  // Authentication_5gaka::kdf(key, 32, oldS, 33, output, 16);
   uint8_t out[32];
-  Authentication_5gaka::kdf(key, 32, S, 31 + netName.size, out, 32);
+  Authentication_5gaka::kdf(key, 32, S, 23 + netName.size + input_len, out, 32);
   for (int i = 0; i < 16; i++) output[i] = out[16 + i];
   oai::utils::output_wrapper::print_buffer("udm_ueau", "XRES*(new)", out, 32);
 

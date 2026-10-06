@@ -135,19 +135,21 @@ void udm_app::handle_generate_auth_data_request(
   uint8_t ck[16]       = {0};
   uint8_t ik[16]       = {0};
   uint8_t ak[6]        = {0};
-  uint8_t xres[8]      = {0};
+  uint8_t xres[16]     = {0};
+  uint8_t xres_len     = 8;
   uint8_t xresStar[16] = {0};
   uint8_t autn[16]     = {0};
   uint8_t kausf[32]    = {0};
 
-  std::string rand_s     = {};
-  std::string autn_s     = {};
-  std::string xresStar_s = {};
-  std::string kausf_s    = {};
-  std::string sqn_s      = {};
-  std::string amf_s      = {};
-  std::string key_s      = {};
-  std::string opc_s      = {};
+  std::string rand_s         = {};
+  std::string autn_s         = {};
+  std::string xresStar_s     = {};
+  std::string kausf_s        = {};
+  std::string sqn_s          = {};
+  std::string amf_s          = {};
+  std::string key_s          = {};
+  std::string opc_s          = {};
+  std::string algorithm_id_s = "milenage";
 
   std::string snn        = authenticationInfoRequest.getServingNetworkName();
   std::string supi       = {};
@@ -259,6 +261,11 @@ void udm_app::handle_generate_auth_data_request(
       conv::hex_str_to_uint8(sqn_s.c_str(), sqn);
       output_wrapper::print_buffer(
           "udm_ueau", "Result For F1-Alg SQN: ", sqn, 6);
+
+      algorithm_id_s = response_data.at("algorithmId");
+      output_wrapper::print_buffer(
+          "udm_ueau", "Result For Algorithm ID: ",
+          (const uint8_t*) algorithm_id_s.c_str(), algorithm_id_s.length());
     } catch (nlohmann::json::exception& e) {
       // error handling
       code = oai::common::sbi::http_status_code::FORBIDDEN;
@@ -371,17 +378,67 @@ void udm_app::handle_generate_auth_data_request(
 
   // 5GAKA functions
   Authentication_5gaka::generate_random(rand, 16);  // generate rand
-  Authentication_5gaka::f1(
-      opc, key, rand, sqn, amf,
-      mac_a);  // to compute mac_a
-  Authentication_5gaka::f2345(
-      opc, key, rand, xres, ck, ik,
-      ak);  // to compute XRES, CK, IK, AK
+
+  if (strncasecmp(algorithm_id_s.c_str(), "xor", 3) == 0) {
+    Logger::udm_ueau().info("Using XOR/Dummy USIM authentication algorithm");
+    uint8_t xdout[16];
+    for (int i = 0; i < 16; i++) {
+      xdout[i] = rand[i] ^ key[i];
+    }
+
+    // The length of XRES can vary based on the test SIM profile:
+    // - 4 bytes (32 bits): old minimal test, R&S LTE R8 USIM.
+    // - 8 bytes (64 bits): The most common length, Agilent Keysight Test SIM.
+    // - 16 bytes (128 bits): The maximum allowed length, most secure. TS.48 v7
+    if (strcasecmp(algorithm_id_s.c_str(), "xor4") == 0) {
+      xres_len = 4;
+    } else if (strcasecmp(algorithm_id_s.c_str(), "xor8") == 0) {
+      xres_len = 8;
+    } else {
+      xres_len = 16;  // default to xor16 or xor
+    }
+
+    Logger::udm_ueau().info(
+        "Using XRES length: %d bytes (algorithmId: %s)", xres_len,
+        algorithm_id_s.c_str());
+    memcpy(xres, xdout, xres_len);
+    // CK is xdout rotated left by 1 byte
+    for (int i = 0; i < 15; i++) {
+      ck[i] = xdout[i + 1];
+    }
+    ck[15] = xdout[0];
+    // IK is xdout rotated left by 2 bytes
+    for (int i = 0; i < 14; i++) {
+      ik[i] = xdout[i + 2];
+    }
+    ik[14] = xdout[0];
+    ik[15] = xdout[1];
+    // AK is xdout[3..8]
+    memcpy(ak, xdout + 3, 6);
+
+    // MAC_A is xdout[0..7] ^ (sqn || amf)
+    uint8_t cdout[8];
+    memcpy(cdout, sqn, 6);
+    memcpy(cdout + 6, amf, 2);
+    for (int i = 0; i < 8; i++) {
+      mac_a[i] = xdout[i] ^ cdout[i];
+    }
+  } else {
+    Logger::udm_ueau().info("Using Milenage authentication algorithm");
+    Authentication_5gaka::f1(
+        opc, key, rand, sqn, amf,
+        mac_a);  // to compute mac_a
+    Authentication_5gaka::f2345(
+        opc, key, rand, xres, ck, ik,
+        ak);  // to compute XRES, CK, IK, AK
+    xres_len = 8;
+  }
+
   Authentication_5gaka::generate_autn(
       sqn, ak, amf, mac_a,
       autn);  // generate AUTN
   Authentication_5gaka::annex_a_4_33501(
-      ck, ik, xres, rand, snn,
+      ck, ik, xres, xres_len, rand, snn,
       xresStar);  // generate xres*
   Authentication_5gaka::derive_kausf(
       ck, ik, snn, sqn, ak,

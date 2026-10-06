@@ -180,8 +180,8 @@ class Authentication_5gaka {
       const uint8_t opc[16], uint64_t imsi, uint8_t key[16], uint8_t plmn[3],
       uint8_t sqn[6], auc_vector_t* vector);
   static void annex_a_4_33501(
-      uint8_t ck[16], uint8_t ik[16], uint8_t* input, uint8_t rand[16],
-      std::string serving_network, uint8_t* output);
+      uint8_t ck[16], uint8_t ik[16], uint8_t* input, uint8_t input_len,
+      uint8_t rand[16], std::string serving_network, uint8_t* output);
   static void generate_random(uint8_t* random_p, ssize_t length);
 
   static void RijndaelKeySchedule(const uint8_t key[16]);
